@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chat · kanhai.it</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh; display: grid; place-items: center;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: radial-gradient(1200px 600px at 50% -10%, #6366f1 0%, #0b1020 55%);
+        color: #e7e9f3; padding: 1.5rem;
+      }
+      .card {
+        width: 100%; max-width: 720px; height: min(86vh, 780px);
+        display: flex; flex-direction: column;
+        padding: 1.5rem 1.5rem 1.25rem;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 20px; backdrop-filter: blur(8px);
+        box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+      }
+      header { display: flex; align-items: center; gap: .6rem; margin-bottom: .25rem; }
+      h1 { margin: 0; font-size: 1.15rem; }
+      .badge { display:inline-block; font-size:.72rem; padding:.18rem .55rem;
+        background:#6366f1; border-radius:999px; }
+      .sub { margin: 0 0 .9rem; font-size: .8rem; opacity: .65; }
+      .sub a { color: #a5b4fc; }
+      #log {
+        flex: 1; overflow-y: auto; display: flex; flex-direction: column;
+        gap: .6rem; padding: .4rem .2rem 1rem; scrollbar-width: thin;
+      }
+      .msg { max-width: 82%; padding: .6rem .85rem; border-radius: 14px;
+        line-height: 1.55; font-size: .94rem; white-space: pre-wrap; word-wrap: break-word; }
+      .user { align-self: flex-end; background: #4f46e5; border-bottom-right-radius: 4px; }
+      .bot  { align-self: flex-start; background: rgba(255,255,255,0.10);
+        border: 1px solid rgba(255,255,255,0.10); border-bottom-left-radius: 4px; }
+      .meta { align-self: flex-start; font-size: .72rem; opacity: .5; margin-top: -.3rem; }
+      .err  { align-self: stretch; background: rgba(239,68,68,.16);
+        border: 1px solid rgba(239,68,68,.45); font-size: .88rem; }
+      .dots span { animation: blink 1.2s infinite; }
+      .dots span:nth-child(2) { animation-delay: .2s; }
+      .dots span:nth-child(3) { animation-delay: .4s; }
+      .timer { opacity: .55; font-size: .82rem; }
+      @keyframes blink { 0%,80%,100% { opacity: .25 } 40% { opacity: 1 } }
+      form { display: flex; gap: .6rem; align-items: flex-end; }
+      textarea {
+        flex: 1; resize: none; min-height: 52px; max-height: 140px;
+        padding: .75rem .9rem; font: inherit; font-size: .94rem; color: inherit;
+        background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.16);
+        border-radius: 12px; outline: none;
+      }
+      textarea:focus { border-color: #6366f1; }
+      button {
+        padding: .8rem 1.1rem; font: inherit; font-weight: 600; font-size: .9rem;
+        color: #fff; background: #6366f1; border: 0; border-radius: 12px; cursor: pointer;
+      }
+      button:disabled { opacity: .45; cursor: not-allowed; }
+      button.ghost { background: transparent; border: 1px solid rgba(255,255,255,.2);
+        color: #cbd5e1; font-weight: 500; padding: .45rem .7rem; font-size: .78rem; }
+      .hint { font-size: .72rem; opacity: .5; margin: .6rem 0 0; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <header>
+        <span class="badge">Qwen3.8-27B</span>
+        <h1>Chat met mijn eigen model</h1>
+      </header>
+      <p class="sub">
+        Draait op de eigen GPU-server van SDAI (<code>q38-27b.sdai.nl</code>) via
+        <code>/api/chat</code>. De API-key blijft op de server.
+        <a href="/">← terug naar de homepage</a>
+      </p>
+
+      <div id="log"></div>
+
+      <form id="f">
+        <textarea id="q" rows="1" placeholder="Stel je vraag… (Enter = versturen, Shift+Enter = nieuwe regel)"></textarea>
+        <button id="send" type="submit">Verstuur</button>
+      </form>
+      <p class="hint">
+        <button id="reset" class="ghost" type="button">Nieuw gesprek</button>
+        &nbsp;Het eerste antwoord kan even duren: de groep deelt één GPU, reken op
+        1 tot 2 minuten bij drukte.
+      </p>
+    </main>
+
+    <script>
+      const log = document.getElementById("log");
+      const form = document.getElementById("f");
+      const input = document.getElementById("q");
+      const sendBtn = document.getElementById("send");
+
+      let history = [];   // [{role, content}] — precies wat de API verwacht
+      let busy = false;
+
+      function bubble(text, cls) {
+        const el = document.createElement("div");
+        el.className = "msg " + cls;
+        el.textContent = text;
+        log.appendChild(el);
+        log.scrollTop = log.scrollHeight;
+        return el;
+      }
+
+      function note(text, cls) {
+        const el = document.createElement("div");
+        el.className = cls || "meta";
+        el.textContent = text;
+        log.appendChild(el);
+        log.scrollTop = log.scrollHeight;
+        return el;
+      }
+
+      bubble("Hoi! Ik ben Qwen3.8-27B, het model dat op de eigen GPU van SDAI draait. Vraag me wat je wilt.", "bot");
+      note("model: qwen3.8-27b · server-side key");
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const vraag = input.value.trim();
+        if (!vraag || busy) return;
+
+        busy = true;
+        sendBtn.disabled = true;
+        input.value = "";
+        input.style.height = "auto";
+
+        bubble(vraag, "user");
+        history.push({ role: "user", content: vraag });
+
+        const wacht = bubble("", "bot");
+        const t0 = Date.now();
+        const tick = () => {
+          const s = Math.round((Date.now() - t0) / 1000);
+          wacht.innerHTML =
+            '<span class="dots"><span>•</span><span>•</span><span>•</span></span> ' +
+            '<span class="timer">Qwen denkt na… ' + s + "s</span>";
+        };
+        tick();
+        const timer = setInterval(tick, 1000);
+
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages: history }),
+          });
+          const data = await res.json();
+
+          if (!res.ok) {
+            wacht.remove();
+            note(data.error || ("Fout " + res.status), "msg err");
+            history.pop();          // mislukte vraag niet in de geschiedenis laten
+          } else {
+            wacht.textContent = data.reply;
+            history.push({ role: "assistant", content: data.reply });
+            if (data.truncated) note("(antwoord afgekapt op het tokenlimiet)");
+            if (data.usage) note("antwoord in " + (data.ms / 1000).toFixed(1) + "s · " + data.usage.total_tokens + " tokens");
+          }
+        } catch (err) {
+          wacht.remove();
+          note("Kon de server niet bereiken: " + err.message, "msg err");
+          history.pop();
+        } finally {
+          clearInterval(timer);
+          busy = false;
+          sendBtn.disabled = false;
+          input.focus();
+        }
+      });
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          form.requestSubmit();
+        }
+      });
+      input.addEventListener("input", () => {
+        input.style.height = "auto";
+        input.style.height = Math.min(input.scrollHeight, 140) + "px";
+      });
+
+      document.getElementById("reset").addEventListener("click", () => {
+        if (busy) return;
+        history = [];
+        log.innerHTML = "";
+        bubble("Nieuw gesprek. Waar wil je het over hebben?", "bot");
+        input.focus();
+      });
+
+      input.focus();
+    </script>
+  </body>
+</html>

@@ -30,3 +30,28 @@ git push
 ```
 
 Repo: `git@github.com:sayfjawad/ruben-website.git`
+
+## Domein kanhai.it
+
+Deze app is gebrand op **kanhai.it**. Het domein zelf staat nog ergens anders en kan
+niet vanuit deze container worden omgezet. Wat er feitelijk is:
+
+| | |
+|---|---|
+| kanhai.it | wijst naar `185.158.164.59` (+ IPv6), LiteSpeed, bestaande site "Fam KANHAI home", Let's Encrypt wildcard-certificaat `*.kanhai.it` |
+| deze app | draait op de workshop-host `158.220.106.157`; het nginx-certificaat daar dekt alleen `*.sdai.nl`, niet kanhai.it |
+| nginx | draait op de host, **niet** in deze container — daar is dus geen configuratie mogelijk |
+
+Om kanhai.it naar deze app te laten wijzen is dit nodig, op de host:
+
+1. DNS van kanhai.it (A en AAAA) naar `158.220.106.157`.
+2. Een nginx server block voor `kanhai.it` dat naar de container op poort 3000 proxyt.
+3. Een TLS-certificaat voor kanhai.it (bijv. certbot) in dat blok.
+
+Let op: zolang stap 1 omgaat, is de bestaande website op kanhai.it niet meer bereikbaar.
+
+Alternatief: de app uitrollen op de hosting van kanhai.it zelf. Dat vereist toegang tot
+die server (FTP/SSH/cPanel) en Node-ondersteuning; met een statische export kan het ook.
+Deze container heeft geen toegang tot die server — de Qwen-key en `/api/chat` werken daar
+alleen als Node daar kan draaien.
+
